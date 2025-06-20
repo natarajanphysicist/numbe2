@@ -102,7 +102,45 @@ class MainWindow(QMainWindow):
         self.show_beams_checkbox = QCheckBox("Show Beams")
         self.show_beams_checkbox.toggled.connect(self._toggle_beam_visualization)
         display_3d_controls_layout.addWidget(self.show_beams_checkbox)
+
+        # Tumor/OAR/Dose toggles
+        self.show_tumor_checkbox = QCheckBox("Show Tumor")
+        self.show_tumor_checkbox.setChecked(True)
+        self.show_tumor_checkbox.toggled.connect(self._toggle_tumor_overlay)
+        display_3d_controls_layout.addWidget(self.show_tumor_checkbox)
+        self.show_oar_checkbox = QCheckBox("Show OARs")
+        self.show_oar_checkbox.setChecked(True)
+        self.show_oar_checkbox.toggled.connect(self._toggle_oar_overlay)
+        display_3d_controls_layout.addWidget(self.show_oar_checkbox)
         
+        # 3D Window/Level controls
+        display_3d_controls_layout.addWidget(QLabel("3D Window Center:"))
+        self.wc3d_input = QLineEdit("40")
+        self.wc3d_input.setFixedWidth(50)
+        display_3d_controls_layout.addWidget(self.wc3d_input)
+        display_3d_controls_layout.addWidget(QLabel("3D Window Width:"))
+        self.ww3d_input = QLineEdit("400")
+        self.ww3d_input.setFixedWidth(50)
+        display_3d_controls_layout.addWidget(self.ww3d_input)
+        self.apply_3d_window_button = QPushButton("Apply 3D W/L")
+        self.apply_3d_window_button.clicked.connect(self._apply_3d_window_level)
+        display_3d_controls_layout.addWidget(self.apply_3d_window_button)
+        # Preset buttons
+        self.preset_bone_button = QPushButton("Bone Preset")
+        self.preset_bone_button.clicked.connect(lambda: self._apply_3d_preset('bone'))
+        display_3d_controls_layout.addWidget(self.preset_bone_button)
+        self.preset_soft_button = QPushButton("Soft Tissue Preset")
+        self.preset_soft_button.clicked.connect(lambda: self._apply_3d_preset('soft'))
+        display_3d_controls_layout.addWidget(self.preset_soft_button)
+        self.preset_brain_button = QPushButton("Brain Preset")
+        self.preset_brain_button.clicked.connect(lambda: self._apply_3d_preset('brain'))
+        display_3d_controls_layout.addWidget(self.preset_brain_button)
+
+        # Reset 3D View button
+        self.reset_3d_view_button = QPushButton("Reset 3D View")
+        self.reset_3d_view_button.clicked.connect(self._reset_3d_view)
+        display_3d_controls_layout.addWidget(self.reset_3d_view_button)
+
         view_3d_main_layout.addWidget(display_3d_controls_widget)
         self.tabs.addTab(self.view_3d_tab_content, "3D View")
 
@@ -684,6 +722,45 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", "Failed to create or set tumor mask from contours. Check logs.")
             self.status_bar.showMessage("Error processing contours.", 5000)
         self._update_ui_element_states()
+
+    def _toggle_tumor_overlay(self, checked):
+        if hasattr(self.viewer_3d, 'tumor_actor') and self.viewer_3d.tumor_actor:
+            self.viewer_3d.tumor_actor.SetVisibility(checked)
+            if self.viewer_3d.vtkWidget.GetRenderWindow():
+                self.viewer_3d.vtkWidget.GetRenderWindow().Render()
+
+    def _toggle_oar_overlay(self, checked):
+        if hasattr(self.viewer_3d, 'oar_actors') and self.viewer_3d.oar_actors:
+            for actor in self.viewer_3d.oar_actors.values():
+                actor.SetVisibility(checked)
+            if self.viewer_3d.vtkWidget.GetRenderWindow():
+                self.viewer_3d.vtkWidget.GetRenderWindow().Render()
+
+    def _apply_3d_window_level(self):
+        try:
+            wc = float(self.wc3d_input.text())
+            ww = float(self.ww3d_input.text())
+            self.viewer_3d.set_window_level(wc, ww)
+        except Exception as e:
+            QMessageBox.warning(self, "3D W/L Error", f"Invalid window/level: {e}")
+
+    def _apply_3d_preset(self, preset):
+        if preset == 'bone':
+            self.viewer_3d.set_preset('bone')
+            self.wc3d_input.setText("300")
+            self.ww3d_input.setText("1500")
+        elif preset == 'soft':
+            self.viewer_3d.set_preset('soft')
+            self.wc3d_input.setText("40")
+            self.ww3d_input.setText("400")
+        elif preset == 'brain':
+            self.viewer_3d.set_preset('brain')
+            self.wc3d_input.setText("40")
+            self.ww3d_input.setText("80")
+
+    def _reset_3d_view(self):
+        if hasattr(self.viewer_3d, 'reset_view'):
+            self.viewer_3d.reset_view()
 
 
 if __name__ == '__main__':

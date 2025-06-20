@@ -2,8 +2,9 @@
 
 import logging
 import numpy as np
+from scipy.ndimage import gaussian_filter
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QApplication
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QApplication, QLabel
 from PyQt5.QtCore import Qt
 
 # VTK imports
@@ -58,6 +59,13 @@ class DicomViewer3DWidget(QWidget):
         self.test_slice_actor: Optional[vtkImageActor] = None
         self.test_sphere_actor: Optional[vtkActor] = None
 
+        self.legend_label = QLabel(self)
+        self.legend_label.setStyleSheet("background-color: rgba(255,255,255,200); padding: 4px; border: 1px solid #888; font-size: 12px;")
+        self.legend_label.setText("<b>Legend:</b><br><span style='color:#ff0000;'>■</span> Tumor<br><span style='color:#00ff00;'>■</span> OAR<br><span style='color:#0000ff;'>■</span> Dose Isosurface")
+        self.legend_label.move(10, 10)
+        self.legend_label.setFixedWidth(140)
+        self.legend_label.setFixedHeight(70)
+        self.legend_label.show()
 
         self.vtkWidget.Initialize()
         logger.info("DicomViewer3DWidget initialized.")
@@ -121,8 +129,9 @@ class DicomViewer3DWidget(QWidget):
                       image_properties: Optional[Dict],
                       tumor_mask_full_zyx: Optional[np.ndarray] = None,   # (s,r,c)
                       oar_masks_full_zyx: Optional[Dict[str, np.ndarray]] = None): # (s,r,c)
-        
         logger.info("3D View: update_volume called. Preparing for Full 3D Volume with SmartMapper[TextureRequested].")
+        if hasattr(self, 'legend_label'):
+            self.legend_label.show()
         # Cleanup all actors
         if hasattr(self, 'test_sphere_actor') and self.test_sphere_actor:
             self.ren.RemoveActor(self.test_sphere_actor)
@@ -153,13 +162,13 @@ class DicomViewer3DWidget(QWidget):
                 self.ren.ResetCamera()
                 self.vtkWidget.GetRenderWindow().Render()
             return
-
-        logger.info(f"3D View: Original full volume data range: {volume_data_full_zyx.min():.2f} to {volume_data_full_zyx.max():.2f}")
+        # --- Apply light Gaussian filter to reduce noise ---
+        filtered_volume = gaussian_filter(volume_data_full_zyx, sigma=0.7)
+        logger.info(f"3D View: Gaussian filter applied (sigma=0.7). Range: {filtered_volume.min():.2f} to {filtered_volume.max():.2f}")
         min_hu_display = -1024.0
         max_hu_display = 3000.0
-        volume_data_clipped_zyx = np.clip(volume_data_full_zyx, min_hu_display, max_hu_display)
+        volume_data_clipped_zyx = np.clip(filtered_volume, min_hu_display, max_hu_display)
         logger.info(f"3D View: Clipped volume data range for display: {volume_data_clipped_zyx.min():.2f} to {volume_data_clipped_zyx.max():.2f}")
-
         vtk_volume_image = self._numpy_to_vtkimage(volume_data_clipped_zyx.astype(np.float32), image_properties)
         try:
             scalar_range = vtk_volume_image.GetScalarRange()
@@ -170,46 +179,50 @@ class DicomViewer3DWidget(QWidget):
         # --- START OF FULL 3D VOLUME RENDERING ---
         logger.info("3D View: Attempting to display full 3D CT volume.")
         if vtk_volume_image is not None and vtk_volume_image.GetNumberOfPoints() > 0:
+            # --- Refined color and opacity transfer functions for smoother look ---
             color_func = vtkColorTransferFunction()
             opacity_func = vtkPiecewiseFunction()
-
-            logger.info("3D View: Applying further refined CT color transfer function (grayscale).")
             color_func.RemoveAllPoints()
-            color_func.AddRGBPoint(min_hu_display, 0.0, 0.0, 0.0)    # Black
-            color_func.AddRGBPoint(10.0, 0.1, 0.1, 0.1)             # Dark Gray for CSF-like
-            color_func.AddRGBPoint(20.0, 0.3, 0.3, 0.3)             # Gray for WM start
-            color_func.AddRGBPoint(40.0, 0.6, 0.6, 0.6)             # Mid-gray for GM
-            color_func.AddRGBPoint(70.0, 0.5, 0.5, 0.5)             # Slightly darker gray
-            color_func.AddRGBPoint(100.0, 0.4, 0.4, 0.4)            # Fading soft tissue
-            color_func.AddRGBPoint(250.0, 0.75, 0.75, 0.75)         # Bone start
-            color_func.AddRGBPoint(1000.0, 0.9, 0.9, 0.9)           # Brighter Bone
-            color_func.AddRGBPoint(max_hu_display, 1.0, 1.0, 1.0)    # White
-
-            logger.info("3D View: Applying 'more solid' CT opacity transfer function.")
+            color_func.AddRGBPoint(min_hu_display, 0.0, 0.0, 0.0)
+            color_func.AddRGBPoint(-500.0, 0.2, 0.2, 0.2)
+            color_func.AddRGBPoint(0.0, 0.5, 0.5, 0.5)
+            color_func.AddRGBPoint(300.0, 0.7, 0.7, 0.7)
+            color_func.AddRGBPoint(1000.0, 0.9, 0.9, 0.9)
+            color_func.AddRGBPoint(max_hu_display, 1.0, 1.0, 1.0)
             opacity_func.RemoveAllPoints()
             opacity_func.AddPoint(min_hu_display, 0.0)
-            opacity_func.AddPoint(0.0, 0.05)
-            opacity_func.AddPoint(20.0, 0.15)
-            opacity_func.AddPoint(70.0, 0.25)
-            opacity_func.AddPoint(150.0, 0.1)
-            opacity_func.AddPoint(250.0, 0.4)
-            opacity_func.AddPoint(1000.0, 0.8)
-            opacity_func.AddPoint(max_hu_display, 0.9)
+            opacity_func.AddPoint(-500.0, 0.01)
+            opacity_func.AddPoint(0.0, 0.07)
+            opacity_func.AddPoint(300.0, 0.15)
+            opacity_func.AddPoint(1000.0, 0.4)
+            opacity_func.AddPoint(max_hu_display, 0.6)
 
             if not hasattr(self, 'volume_property') or self.volume_property is None:
                  self.volume_property = vtkVolumeProperty()
             self.volume_property.SetColor(color_func)
             self.volume_property.SetScalarOpacity(opacity_func)
             self.volume_property.SetInterpolationTypeToLinear()
-            logger.info("3D View: Turning ON shading for 3D volume.")
             self.volume_property.ShadeOn()
-            self.volume_property.SetAmbient(0.3); self.volume_property.SetDiffuse(0.7); self.volume_property.SetSpecular(0.2); self.volume_property.SetSpecularPower(10.0)
+            self.volume_property.SetAmbient(0.3)
+            self.volume_property.SetDiffuse(0.7)
+            self.volume_property.SetSpecular(0.2)
+            self.volume_property.SetSpecularPower(10.0)
 
-            logger.info("3D View: Using ONLY vtkSmartVolumeMapper (default render mode).")
-            volume_mapper = vtkSmartVolumeMapper()
-            # volume_mapper.SetRequestedRenderModeToTexture() # THIS LINE CAUSES THE AttributeError - REMOVED
-
-            volume_mapper.SetInputData(vtk_volume_image)
+            # --- Use GPU Ray Casting if available ---
+            try:
+                from vtkmodules.vtkRenderingVolumeOpenGL2 import vtkGPUVolumeRayCastMapper
+                volume_mapper = vtkGPUVolumeRayCastMapper()
+                volume_mapper.SetInputData(vtk_volume_image)
+                volume_mapper.SetBlendModeToComposite()
+                volume_mapper.SetSampleDistance(0.2)
+            except ImportError:
+                from vtkmodules.vtkRenderingVolumeOpenGL2 import vtkSmartVolumeMapper
+                volume_mapper = vtkSmartVolumeMapper()
+                volume_mapper.SetInputData(vtk_volume_image)
+                if hasattr(volume_mapper, 'SetBlendModeToComposite'):
+                    volume_mapper.SetBlendModeToComposite()
+                if hasattr(volume_mapper, 'SetSampleDistance'):
+                    volume_mapper.SetSampleDistance(0.5)
 
             self.volume_actor = vtkVolume()
             self.volume_actor.SetMapper(volume_mapper)
@@ -227,10 +240,13 @@ class DicomViewer3DWidget(QWidget):
         # --- END OF FULL 3D VOLUME RENDERING ---
 
         if tumor_mask_full_zyx is not None and np.any(tumor_mask_full_zyx):
+            # Increase opacity for better visibility
             self.tumor_actor = self._create_surface_actor_from_mask(
-                tumor_mask_full_zyx, image_properties, color=(1.0, 0.0, 0.0), opacity=0.4
+                tumor_mask_full_zyx, image_properties, color=(1.0, 0.0, 0.0), opacity=0.7
             )
-            if self.tumor_actor: self.ren.AddActor(self.tumor_actor); logger.info("Tumor mask actor added.")
+            if self.tumor_actor:
+                self.ren.AddActor(self.tumor_actor)
+                logger.info("Tumor mask actor added (opacity 0.7 for visibility).")
 
         if oar_masks_full_zyx:
             oar_colors = [(0,1,0), (0,0,1), (1,1,0), (0,1,1), (1,0,1), (0.5,0.5,0), (0,0.5,0.5), (0.5,0,0.5)]
@@ -405,6 +421,49 @@ class DicomViewer3DWidget(QWidget):
         self._clear_dose_isosurfaces()
         self._clear_beam_visualization() 
         if self.vtkWidget.GetRenderWindow(): self.vtkWidget.GetRenderWindow().Render()
+        if hasattr(self, 'legend_label'):
+            self.legend_label.hide()
+
+    def set_window_level(self, wc, ww):
+        min_hu = wc - ww / 2.0
+        max_hu = wc + ww / 2.0
+        color_func = vtkColorTransferFunction()
+        opacity_func = vtkPiecewiseFunction()
+        color_func.RemoveAllPoints()
+        color_func.AddRGBPoint(min_hu, 0.0, 0.0, 0.0)
+        color_func.AddRGBPoint(wc, 0.8, 0.8, 0.8)
+        color_func.AddRGBPoint(max_hu, 1.0, 1.0, 1.0)
+        opacity_func.RemoveAllPoints()
+        opacity_func.AddPoint(min_hu, 0.0)
+        opacity_func.AddPoint(wc, 0.18)
+        opacity_func.AddPoint(max_hu, 0.7)
+        if not hasattr(self, 'volume_property') or self.volume_property is None:
+            return
+        self.volume_property.SetColor(color_func)
+        self.volume_property.SetScalarOpacity(opacity_func)
+        self.volume_property.SetInterpolationTypeToLinear()
+        self.volume_property.ShadeOn()
+        self.volume_property.SetAmbient(0.3)
+        self.volume_property.SetDiffuse(0.7)
+        self.volume_property.SetSpecular(0.2)
+        self.volume_property.SetSpecularPower(10.0)
+        if self.vtkWidget.GetRenderWindow():
+            self.vtkWidget.GetRenderWindow().Render()
+
+    def set_preset(self, preset):
+        if preset == 'bone':
+            self.set_window_level(300, 1500)
+        elif preset == 'soft':
+            self.set_window_level(40, 400)
+        elif preset == 'brain':
+            self.set_window_level(40, 80)
+
+    def reset_view(self):
+        if self.ren:
+            self.ren.ResetCamera()
+            self.ren.ResetCameraClippingRange()
+            if self.vtkWidget.GetRenderWindow():
+                self.vtkWidget.GetRenderWindow().Render()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
