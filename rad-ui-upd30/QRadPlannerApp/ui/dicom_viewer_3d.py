@@ -24,6 +24,7 @@ from vtkmodules.vtkFiltersGeneral import vtkDiscreteMarchingCubes
 from vtkmodules.vtkFiltersSources import vtkLineSource, vtkConeSource, vtkCylinderSource, vtkSphereSource
 from vtkmodules.vtkCommonMath import vtkMatrix4x4
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
+from vtkmodules.vtkRenderingCore import vtkLight
 # from vtkmodules.vtkRenderingVolume import vtkFixedPointVolumeRayCastMapper # CRITICALLY ensure this is commented or removed
 from vtkmodules.vtkRenderingVolumeOpenGL2 import vtkSmartVolumeMapper # Ensure vtkSmartVolumeMapper is imported
 # from vtkmodules.vtkRenderingVolumeOpenGL2 import vtkGPUVolumeRayCastMapper # CRITICALLY ensure this is commented or removed
@@ -46,10 +47,22 @@ class DicomViewer3DWidget(QWidget):
         self.vtkWidget = QVTKRenderWindowInteractor(self)
         self.main_layout.addWidget(self.vtkWidget)
 
+        # Create renderer with improved lighting
         self.ren = vtkRenderer()
         self.ren.SetBackground(0.1, 0.2, 0.4) 
+        
+        # Add lighting
+        light = vtkLight()
+        light.SetLightTypeToSceneLight()
+        light.SetPosition(0, 0, 1)
+        light.SetDiffuseColor(1, 1, 1)
+        light.SetSpecularColor(1, 1, 1)
+        light.SetAmbientColor(0.2, 0.2, 0.2)
+        self.ren.AddLight(light)
+
         self.vtkWidget.GetRenderWindow().AddRenderer(self.ren)
 
+        # Initialize actors
         self.volume_actor: Optional[vtkVolume] = None
         self.tumor_actor: Optional[vtkActor] = None
         self.oar_actors: Dict[str, vtkActor] = {}
@@ -59,31 +72,81 @@ class DicomViewer3DWidget(QWidget):
         self.test_slice_actor: Optional[vtkImageActor] = None
         self.test_sphere_actor: Optional[vtkActor] = None
 
+<<<<<<< HEAD
         self.legend_label = QLabel(self)
         self.legend_label.setStyleSheet("background-color: rgba(255,255,255,200); padding: 4px; border: 1px solid #888; font-size: 12px;")
         self.legend_label.setText("<b>Legend:</b><br><span style='color:#ff0000;'>■</span> Tumor<br><span style='color:#00ff00;'>■</span> OAR<br><span style='color:#0000ff;'>■</span> Dose Isosurface")
         self.legend_label.move(10, 10)
         self.legend_label.setFixedWidth(140)
         self.legend_label.setFixedHeight(70)
+=======
+        # Add legend with better styling
+        self.legend_label = QLabel(self)
+        self.legend_label.setStyleSheet("""
+            QLabel {
+                background-color: rgba(255,255,255,200);
+                padding: 8px;
+                border: 1px solid #666;
+                border-radius: 4px;
+                font-size: 12px;
+                font-family: Arial, sans-serif;
+            }
+            QLabel b {
+                color: #333;
+            }
+        """)
+        self.legend_label.setText("""
+            <b>Legend:</b><br>
+            <span style='color:#ff0000;'>■</span> Tumor<br>
+            <span style='color:#00ff00;'>■</span> OAR<br>
+            <span style='color:#0000ff;'>■</span> Dose Isosurface<br>
+            <span style='color:#ff8800;'>■</span> Beam Path
+        """)
+        self.legend_label.move(10, 10)
+        self.legend_label.setFixedWidth(160)
+        self.legend_label.setFixedHeight(90)
+>>>>>>> bb5e17f (Initial commit for QRadPlannerApp)
         self.legend_label.show()
 
         self.vtkWidget.Initialize()
         logger.info("DicomViewer3DWidget initialized.")
 
+        # Set up interactor style
         logger.info("3D View: Setting vtkInteractorStyleTrackballCamera.")
         style = vtkInteractorStyleTrackballCamera()
         interactor = self.vtkWidget.GetRenderWindow().GetInteractor()
         if interactor:
             interactor.SetInteractorStyle(style)
+            # Add custom key bindings
+            interactor.AddObserver('KeyPressEvent', self.on_key_press)
         else:
             logger.error("3D View: Failed to get interactor to set style.")
 
+    def on_key_press(self, obj, event):
+        """Handle custom key press events"""
+        key = obj.GetKeySym()
+        if key == 'w':  # Wireframe mode
+            if self.volume_actor:
+                self.volume_actor.GetProperty().SetRepresentationToWireframe()
+        elif key == 's':  # Surface mode
+            if self.volume_actor:
+                self.volume_actor.GetProperty().SetRepresentationToSurface()
+        elif key == 'f':  # Full volume rendering
+            if self.volume_actor:
+                self.volume_actor.GetProperty().SetRepresentationToSurface()
+                self.volume_actor.GetProperty().SetInterpolationTypeToLinear()
+        self.vtkWidget.GetRenderWindow().Render()
+
 
     def _numpy_to_vtkimage(self, np_array_s_r_c: np.ndarray, image_properties: Optional[Dict] = None) -> vtkImageData:
+        """Convert numpy array to VTK image with improved quality"""
         vtk_image = vtkImageData()
         depth_s, height_r, width_c = np_array_s_r_c.shape
         vtk_image.SetDimensions(width_c, height_r, depth_s)
 
+        # Apply Gaussian filter for noise reduction
+        np_array_filtered = gaussian_filter(np_array_s_r_c, sigma=0.5)
+        
         if image_properties:
             spacing_x_vtk = image_properties.get('pixel_spacing', [1.0, 1.0])[1]
             spacing_y_vtk = image_properties.get('pixel_spacing', [1.0, 1.0])[0]
@@ -92,11 +155,31 @@ class DicomViewer3DWidget(QWidget):
             origin_pat = image_properties.get('origin', [0.0, 0.0, 0.0])
             vtk_image.SetOrigin(origin_pat[0], origin_pat[1], origin_pat[2])
         else: 
-            vtk_image.SetSpacing(1.0,1.0,1.0); vtk_image.SetOrigin(0.0,0.0,0.0)
+            vtk_image.SetSpacing(1.0,1.0,1.0)
+            vtk_image.SetOrigin(0.0,0.0,0.0)
 
-        vtk_array = numpy_support.numpy_to_vtk(num_array=np_array_s_r_c.ravel(order='F'), deep=True)
+        # Convert to float32 for better precision
+        np_array_filtered = np_array_filtered.astype(np.float32)
+        vtk_array = numpy_support.numpy_to_vtk(num_array=np_array_filtered.ravel(order='F'), deep=True)
         vtk_image.GetPointData().SetScalars(vtk_array)
+        
+        # Apply windowing
+        self._apply_windowing(vtk_image)
+        
         return vtk_image
+
+    def _apply_windowing(self, vtk_image: vtkImageData):
+        """Apply windowing to improve contrast"""
+        window_center = 127.5
+        window_width = 255.0
+        
+        shift_scale = vtkImageShiftScale()
+        shift_scale.SetInputData(vtk_image)
+        shift_scale.SetShift(-window_center + 0.5)
+        shift_scale.SetScale(255.0 / window_width)
+        shift_scale.Update()
+        
+        return shift_scale.GetOutput()
     
     def _create_surface_actor_from_mask(self, mask_data_zyx: np.ndarray,
                                         image_properties: Dict, 

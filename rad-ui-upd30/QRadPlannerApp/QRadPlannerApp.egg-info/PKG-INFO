@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: QRadPlannerApp
+Version: 0.1
+Requires-Dist: PyQt5>=5.15.0
+Requires-Dist: numpy>=1.21.0
+Requires-Dist: scipy>=1.7.0
+Requires-Dist: pydicom>=2.3.0
+Requires-Dist: vtk>=9.0.0
+Requires-Dist: scikit-image>=0.18.0
+Dynamic: requires-dist
